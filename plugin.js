@@ -2,13 +2,12 @@
 /**
  * Hanime1.me — Kino plugin
  * Fuente: hanime1.me (mirror hanimeone.me si hace falta)
- * - Listados: video-item-container + home-rows-videos-div (genre/search)
- * - Watch: video#player > source size="720|1080|480" src="...mp4"
- * - Home: Recientes, Últimos, Uncensored (無碼), 裏番, 泡麵番, 3DCG, Motion Anime…
- * - Búsqueda y Ver más: máximo permitido (48)
- * - Ajuste de calidad; prioriza mejor servidor/calidad; evita anuncios
- * - Teléfono y TV (MP4 directo con Referer)
- * v1.0.1 — mirror primero, await r.text(), isChallenge no FP, home Row[], resolve Stream
+ * - Listados: video-item-container
+ * - Watch: video#player > source size/src mp4 (vdownload.hembed.com)
+ * - Home: Recientes, Últimos, Uncensored, 裏番, 泡麵番, Motion, 3DCG, 2D
+ * - Búsqueda y Ver más: hasta 48
+ * - Calidad configurable; evita anuncios reales (no vdownload)
+ * v1.0.2 — filtro ads no mata vdownload; await r.text(); mirror primero; home Row[]; resolve Stream
  */
 
 const PRIMARY = "https://hanime1.me";
@@ -22,7 +21,6 @@ const HOME_ROW = 12;
 const AD_RE =
   /\b(sponsored|sponsor|advert|promo code|trafficjunky|exoclick|juicyads|outbrain|taboola|click here|buy now|discount|affiliate|直播|廣告|广告|贊助商|赞助|無碼18禁遊|erodalabs|ERO LABS|EROLABS)\b/i;
 
-/** Secciones Home: id, título mostrado, path o query de búsqueda */
 const SECTIONS = [
   { id: "latest", title: "Recientes", path: "/?page=1", sortHome: true },
   { id: "newest", title: "Últimos subidos", path: "/search?sort=最新上傳" },
@@ -79,24 +77,24 @@ function strip(s) {
     .trim();
 }
 
-function isAd(title) {
-  return AD_RE.test(String(title || ""));
-}
-
 function absUrl(u, base) {
-  if (!u) return u;
-  u = String(u).trim();
+  if (!u) return "";
+  u = String(u).replace(/&amp;/g, "&").trim();
+  if (!u || u.indexOf("data:") === 0) return "";
   if (u.indexOf("//") === 0) return "https:" + u;
   if (u.indexOf("http") === 0) return u;
-  base = base || PRIMARY;
-  if (u.charAt(0) === "/") return base.replace(/\/$/, "") + u;
-  return base.replace(/\/$/, "") + "/" + u;
+  var b = base || PRIMARY;
+  if (u.charAt(0) === "/") return b + u;
+  return b + "/" + u;
+}
+
+function isAd(title) {
+  return AD_RE.test(title || "");
 }
 
 function isChallenge(html) {
   if (!html) return true;
   var t = String(html);
-  // Página real de Hanime siempre trae tarjetas; no tratar scripts de CF como bloqueo.
   if (t.indexOf("watch?v=") !== -1 || t.indexOf("video-item") !== -1) return false;
   var head = t.slice(0, 2500);
   return (
@@ -121,15 +119,10 @@ function normalizeBase(url) {
   return PRIMARY;
 }
 
-/**
- * Intenta MIRROR primero (PRIMARY suele 403 Cloudflare) y cae al otro.
- */
 async function fetchHtml(pathOrUrl) {
   var path = pathOrUrl || "/";
   var isAbs = path.indexOf("http") === 0;
-  var urls = isAbs
-    ? [path]
-    : [MIRROR + path, PRIMARY + path];
+  var urls = isAbs ? [path] : [MIRROR + path, PRIMARY + path];
 
   var lastErr = null;
   for (var i = 0; i < urls.length; i++) {
@@ -171,7 +164,7 @@ function parseCards(html, base, limit) {
   base = base || PRIMARY;
   var seen = {};
 
-  function push(id, title, poster, duration) {
+  function push(id, title, poster) {
     if (!id || !title || isAd(title)) return;
     if (seen[id]) return;
     seen[id] = true;
@@ -189,9 +182,7 @@ function parseCards(html, base, limit) {
   for (var pi = 1; pi < parts.length && items.length < limit; pi++) {
     var block = parts[pi].slice(0, 1200);
     if (block.indexOf("watch?v=") === -1) continue;
-    if (/erodalabs|贊助商|赞助/i.test(block) && block.indexOf("hanime") === -1) {
-      continue;
-    }
+    if (/erodalabs|贊助商|赞助/i.test(block) && block.indexOf("hanime") === -1) continue;
     var hm = block.match(/href="([^"]*watch\?v=(\d+)[^"]*)"/i);
     if (!hm) continue;
     var id = hm[2];
@@ -207,7 +198,7 @@ function parseCards(html, base, limit) {
           [])[1],
         base
       ) || undefined;
-    push(id, title, poster, undefined);
+    push(id, title, poster);
   }
 
   if (items.length < 4) {
@@ -223,12 +214,10 @@ function parseCards(html, base, limit) {
       var near = html.slice(Math.max(0, m.index - 100), m.index + 700);
       var title2 =
         strip(
-          (inner.match(/class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\//i) ||
-            [])[1] || ""
+          (inner.match(/class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\//i) || [])[1] || ""
         ) ||
         strip(
-          (near.match(/home-rows-videos-title[^>]*>([\s\S]*?)<\//i) ||
-            [])[1] || ""
+          (near.match(/home-rows-videos-title[^>]*>([\s\S]*?)<\//i) || [])[1] || ""
         ) ||
         strip((near.match(/class="title"[^>]*>([\s\S]*?)<\//i) || [])[1] || "");
       if (!title2 || title2.length < 2 || title2.length > 220) continue;
@@ -241,7 +230,7 @@ function parseCards(html, base, limit) {
           [])[1],
         base
       );
-      push(id2, title2, poster2, undefined);
+      push(id2, title2, poster2);
     }
   }
 
@@ -271,46 +260,80 @@ function sectionById(id) {
   return null;
 }
 
+/** Extrae sources MP4 del HTML del watch */
 function extractSources(html) {
   var out = [];
-  var seen = {};
-  var re = /<source[^>]+size=["']?(\d+)["']?[^>]+src=["']([^"']+)["']/gi;
+  if (!html) return out;
+
+  var re = /<source\b([^>]*)>/gi;
   var m;
-  while ((m = re.exec(html))) {
-    var h = parseInt(m[1], 10) || 0;
-    var u = m[2];
-    if (!u || seen[u]) continue;
-    seen[u] = 1;
-    out.push({ height: h, url: u });
+  while ((m = re.exec(html)) !== null) {
+    var attrs = m[1] || "";
+    var srcM = attrs.match(/\bsrc=["']([^"']+)["']/i);
+    if (!srcM) continue;
+    var src = absUrl(srcM[1]);
+    if (!src || src.indexOf(".mp4") === -1) continue;
+    // No usar "ads?" suelto: coincide con "vdownload"
+    if (/(?:^[\/?&_.-])(?:ads?|banner|promo|click|tracker)(?:[\/?&_.-]|$)/i.test(src)) continue;
+    if (/trafficjunky|exoclick|juicyads|doubleclick|googlesyndication/i.test(src)) continue;
+    var size = 0;
+    var sizeM = attrs.match(/\bsize=["']?(\d+)["']?/i);
+    if (sizeM) size = parseInt(sizeM[1], 10) || 0;
+    if (!size) {
+      var sm = src.match(/(\d{3,4})p/i);
+      if (sm) size = parseInt(sm[1], 10);
+    }
+    out.push({ url: src, height: size || 0, format: "mp4" });
   }
+
   if (!out.length) {
-    re = /<source[^>]+src=["']([^"']+)["'][^>]*size=["']?(\d+)/gi;
-    while ((m = re.exec(html))) {
-      var u2 = m[1];
-      var h2 = parseInt(m[2], 10) || 0;
-      if (!u2 || seen[u2]) continue;
-      seen[u2] = 1;
-      out.push({ height: h2, url: u2 });
+    var vm = html.match(/<video[^>]+src=["']([^"']+\.mp4[^"']*)["']/i);
+    if (vm) out.push({ url: absUrl(vm[1]), height: 0, format: "mp4" });
+  }
+
+  if (!out.length) {
+    var cm = html.match(/const\s+source\s*=\s*['"]([^'"]+)['"]/i);
+    if (cm && /\.mp4/i.test(cm[1])) {
+      out.push({ url: absUrl(cm[1]), height: 0, format: "mp4" });
     }
   }
+
   if (!out.length) {
-    var vm = html.match(/<video[^>]+src=["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/i);
-    if (vm && !seen[vm[1]]) out.push({ height: 0, url: vm[1] });
+    var reH = /https?:\/\/(?:vdownload\.)?hembed\.com\/[^\s"']+?\.mp4[^\s"']*/gi;
+    var hm;
+    while ((hm = reH.exec(html)) !== null) {
+      var u = hm[0];
+      if (/image\//i.test(u)) continue;
+      var hh = 0;
+      var hhm = u.match(/(\d{3,4})p/i);
+      if (hhm) hh = parseInt(hhm[1], 10) || 0;
+      out.push({ url: u, height: hh, format: "mp4" });
+    }
   }
-  out.sort(function (a, b) { return (b.height || 0) - (a.height || 0); });
-  return out;
+
+  var seen = {};
+  var uniq = [];
+  for (var i = 0; i < out.length; i++) {
+    if (seen[out[i].url]) continue;
+    seen[out[i].url] = true;
+    uniq.push(out[i]);
+  }
+  uniq.sort(function (a, b) {
+    return (b.height || 0) - (a.height || 0);
+  });
+  return uniq;
 }
 
 function pickSource(sources, want) {
   if (!sources || !sources.length) return null;
-  if (!want || want === "auto") return sources[0];
+  if (want === "auto" || !want) return sources[0];
   var target = parseInt(want, 10) || 0;
   if (!target) return sources[0];
   for (var i = 0; i < sources.length; i++) {
-    if (sources[i].height === target) return sources[i];
+    if ((sources[i].height || 0) === target) return sources[i];
   }
   for (var j = 0; j < sources.length; j++) {
-    if (sources[j].height && sources[j].height <= target) return sources[j];
+    if ((sources[j].height || 0) && sources[j].height <= target) return sources[j];
   }
   return sources[sources.length - 1];
 }
@@ -322,14 +345,10 @@ function streamHeaders(base) {
   };
 }
 
-// ─── exports ───────────────────────────────────────────────
-
 export async function search(query) {
   var q = strip((query && query.q) ? query.q : query || "");
   if (!q) return { items: [] };
-
-  var path =
-    "/search?query=" + encodeURIComponent(q) + "&page=1";
+  var path = "/search?query=" + encodeURIComponent(q) + "&page=1";
   var res = await fetchHtml(path);
   var items = parseCards(res.html, res.base, MAX_PAGE);
   return {
@@ -343,7 +362,6 @@ export async function search(query) {
 
 export async function home() {
   var rows = [];
-
   try {
     var homeRes = await fetchHtml("/");
     var homeItems = parseCards(homeRes.html, homeRes.base, HOME_ROW);
@@ -414,21 +432,13 @@ export async function browse(ref, cursor) {
     var sec = sectionById(secM[1]);
     page = parseInt(secM[2], 10) || 1;
     if (sec) {
-      if (sec.id === "latest") {
-        path = pageUrl("/", page);
-      } else {
-        path = pageUrl(sec.path, page);
-      }
+      if (sec.id === "latest") path = pageUrl("/", page);
+      else path = pageUrl(sec.path, page);
     }
   }
 
-  if (!path && String(c).indexOf("/") === 0) {
-    path = pageUrl(c, page);
-  }
-
-  if (!path) {
-    path = "/search?query=" + encodeURIComponent(String(c)) + "&page=1";
-  }
+  if (!path && String(c).indexOf("/") === 0) path = pageUrl(c, page);
+  if (!path) path = "/search?query=" + encodeURIComponent(String(c)) + "&page=1";
 
   var res = await fetchHtml(path);
   var items = parseCards(res.html, res.base, MAX_PAGE);
@@ -436,13 +446,9 @@ export async function browse(ref, cursor) {
   var nextPage = page + 1;
   var next = undefined;
   if (items.length >= Math.min(12, MAX_PAGE)) {
-    if (sm) {
-      next = "search:" + sm[1] + ":" + nextPage;
-    } else if (secM) {
-      next = "section:" + secM[1] + ":" + nextPage;
-    } else {
-      next = pageUrl(path, nextPage);
-    }
+    if (sm) next = "search:" + sm[1] + ":" + nextPage;
+    else if (secM) next = "section:" + secM[1] + ":" + nextPage;
+    else next = pageUrl(path, nextPage);
   }
 
   return { items: items, next: next };
